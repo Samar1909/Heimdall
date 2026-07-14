@@ -1,29 +1,39 @@
-# 🛡️ Heimdall: Real-Time Fraud Engine
+# 🛡️ Heimdall: Real-Time Fraud Engineering Pipeline
 
 **Heimdall** is an ultra-low latency, high-throughput machine learning pipeline designed to detect fraudulent financial transactions in real-time.
 
-Built for enterprise-scale performance, Heimdall bridges the gap between complex data science and robust backend engineering. It utilizes an in-memory **Redis Feature Store** to reconstruct user histories instantly and integrates **Explainable AI (XAI)** to provide mathematical transparency for every blocked transaction, ensuring compliance with financial regulations.
+Unlike standard ML deployments that expect clients to provide fully pre-processed, anonymized data, Heimdall acts as a true **real-time feature engine**. It receives minimal transactional data (user, merchant, amount, time), instantly reconstructs behavioral history using a Redis Feature Store, computes complex geographical and temporal metrics on the fly, and evaluates the complete feature vector against an imbalance-optimized XGBoost model.
 
 ---
 
 ## ✨ Key Features
 
-- ⚡ **Sub-15ms Inference Engine:** Model artifacts are loaded directly into RAM at server startup via FastAPI, bypassing disk I/O bottlenecks to achieve blazing-fast prediction times.
-- 🧠 **Explainable AI (XAI) with SHAP:** "Black-box" predictions are unboxed in real-time. For every transaction, a globally initialized SHAP `TreeExplainer` extracts the top 3 risk factors (log-odds feature contributions) that triggered the fraud alert.
-- 💾 **Redis Feature Store:** Simulates a production environment where payment gateways only send minimal data (`Card_ID`, `Amount`). Heimdall instantly queries a Redis cache to append historical rolling features (V1–V28) before passing the vector to the ML model.
-- ⚖️ **Imbalance-Optimized XGBoost:** Trained on highly skewed financial datasets (99.9% legitimate traffic). The model abandons raw accuracy in favor of optimizing the Area Under the Precision-Recall Curve (AUCPR) using calculated positive scaling weights.
-- 🐳 **Production-Ready & Stress-Tested:** Fully containerized using Docker and stress-tested using Locust to handle high-concurrency traffic spikes without latency degradation.
+- ⚙️ **Real-Time Feature Engineering:** Computes complex metrics (e.g., Haversine distances between user and merchant, time-based aggregations, spend ratios) in-memory during the request lifecycle. This ensures the ML model has rich, interpretable data without burdening the client payment gateway.
+
+- 💾 **Dual-Database Architecture:**
+  - **MySQL (The Ledger):** A durable, relational source of truth managed via SQLAlchemy ORM, storing raw users, merchants, and transactions logs.
+  - **Redis (Feature Store):** Maintains rolling, aggregated user and merchant state (e.g., historical transaction counts, average spend amounts) for sub-millisecond retrieval.
+
+- ⚡ **Asynchronous State Updates:** Utilizes background tasks to update Redis aggregates and write raw transaction logs to the MySQL ledger *after* the client receives the prediction, guaranteeing strict sub-20ms response times.
+
+- 🧠 **Explainable AI (XAI) with SHAP:** "Black-box" predictions are unboxed in real-time. A globally initialized SHAP `TreeExplainer` extracts the top risk factors that triggered a fraud alert, ensuring compliance with financial transparency regulations.
+
+- ⚖️ **Imbalance-Optimized XGBoost:** Trained on highly skewed financial datasets. The model abandons raw accuracy in favor of optimizing the Area Under the Precision-Recall Curve (AUCPR) using calculated positive scaling weights.
 
 ---
 
 ## 🏗️ Architecture Flow
 
-1. **Incoming Request:** Payment terminal sends `{card_id, amount}` to Heimdall API.
-2. **State Retrieval:** FastAPI queries Redis to fetch the historical profile (V1–V28) for the specific `card_id`.
-3. **Feature Engineering:** The historical data and current amount are merged into a complete 30-feature vector.
-4. **ML Inference:** The XGBoost model processes the vector and outputs a fraud probability (0.0 to 1.0).
-5. **XAI Extraction:** If the transaction exceeds risk thresholds, SHAP calculates exactly which features skewed the score.
-6. **Response:** API immediately returns the decision (`APPROVED`, `FLAGGED_FOR_REVIEW`, or `BLOCKED`) alongside the SHAP explanations.
+1. **Incoming Request:** The payment gateway sends a minimal payload to the API: `{ "user_id": "usr_123", "merchant_id": "mer_89", "amt": 55.00, "unix_time": 1690000000 }`.
+2. **State Retrieval:** FastAPI queries Redis to fetch the historical profile and aggregated stats for both the User and the Merchant.
+3. **Dynamic Computation:** The backend dynamically calculates missing features:
+   - Time derivatives (hour, day of week, month).
+   - Haversine geographic distance between user and merchant coordinates.
+   - Behavioral ratios (e.g., `amt / card_avg_amt_prior`).
+   - One-hot encoding for merchant categories.
+4. **ML Inference:** The assembled multi-feature vector is passed to the XGBoost model to calculate the fraud probability.
+5. **XAI Extraction:** If flagged, SHAP calculates exactly which interpretable features (e.g., `distance_km`, `amt_to_avg_ratio`) skewed the score.
+6. **Async Ledger Update:** The API returns the decision immediately. In the background, SQLAlchemy writes the transaction to the MySQL database, and Redis increments the rolling user/merchant statistics.
 
 ---
 
@@ -32,26 +42,27 @@ Built for enterprise-scale performance, Heimdall bridges the gap between complex
 ```
 HEIMDALL/
 │
-├── app/                        # FastAPI Application & ML Service Logic
-│   ├── main.py                 # API Routes & Server Config
-│   ├── ml_service.py           # XGBoost and SHAP inference engine
-│   └── schemas.py              # Pydantic data validation models
+├── app/                                # FastAPI Application & ML Service Logic
+│   ├── __init__.py
+│   ├── database.py                     # SQLAlchemy configuration and connection pooling
+│   ├── main.py                         # API Routes, Background Tasks, & Server Config
+│   ├── ml_service.py                   # XGBoost and SHAP inference engine, Feature Eng.
+│   ├── models.py                       # ORM Database Tables (Users, Merchants, TXs)
+│   └── redis_server.py                 # Redis connection and cache management
 │
-├── artifacts/                  # Serialized ML Models
-│   └── heimdall_fraud_model.json
+├── artifacts/                          # Serialized ML Models
+│   └── heimdall_fraud_model.json       # Exported XGBoost model artifact
 │
-├── notebooks/                  # Data Science & Model Training
-│   └── model.ipynb
+├── data/                               # Raw Datasets (Ignored in Git)
+│   ├── creditcardTest.csv              # Test dataset
+│   └── creditcardTrain.csv             # Training dataset
 │
-├── scripts/                    # Utilities
-│   └── populate_redis.py       # Script to load CSV features into Redis
+├── notebooks/                          # Data Science & Model Training
+│   ├── model.ipynb                     # Jupyter notebook for EDA and training
+│   └── MODEL_NOTES.md                  # Research and modeling documentation
 │
-├── data/                       # Raw Datasets (Ignored in Git)
-│   └── creditcard.csv
-│
-├── docker-compose.yml          # Container orchestration (FastAPI + Redis)
-├── Dockerfile                  # API Image build instructions
-└── requirements.txt            # Python dependencies
+├── README.md                           # Project documentation
+└── requirements.txt                    # Python dependencies
 ```
 
 ---
@@ -60,12 +71,14 @@ HEIMDALL/
 
 **Endpoint:** `POST /predict`
 
-**Request Payload:**
+**Client Request Payload (Minimal):**
 
 ```json
 {
-  "card_id": "usr_987654321",
-  "amount": 1450.75
+  "user_id": "usr_987654321",
+  "merchant_id": "mer_54321",
+  "amt": 1450.75,
+  "unix_time": 1691234567
 }
 ```
 
@@ -75,11 +88,11 @@ HEIMDALL/
 {
   "transaction_status": "BLOCKED",
   "fraud_probability": 0.9412,
-  "inference_time_ms": 11.45,
+  "inference_time_ms": 14.45,
   "top_risk_factors": {
-    "V4": 3.1415,
-    "Amount": 1.294,
-    "V11": 0.812
+    "amt_to_avg_ratio": 3.1415,
+    "distance_km": 1.294,
+    "category_travel": 0.812
   }
 }
 ```
@@ -88,30 +101,10 @@ HEIMDALL/
 
 ## 🛠️ Tech Stack
 
-| Layer | Technologies |
+| Layer | Technology |
 |---|---|
 | **Backend** | Python 3.12, FastAPI, Uvicorn, Pydantic |
+| **Database / ORM** | MySQL, SQLAlchemy |
+| **Feature Store (Cache)** | Redis |
 | **Machine Learning** | XGBoost, Scikit-Learn, Pandas, NumPy |
 | **Explainability** | SHAP (SHapley Additive exPlanations) |
-| **Database/Caching** | Redis |
-| **DevOps** | Docker, Docker Compose, Locust (Load Testing) |
-
----
-
-## ⚙️ Local Setup (Docker)
-
-1. Clone the repository.
-2. Ensure Docker Desktop is running.
-3. Start the pipeline:
-
-   ```bash
-   docker-compose up --build -d
-   ```
-
-4. Populate the Redis Feature Store with mock user data:
-
-   ```bash
-   python scripts/populate_redis.py
-   ```
-
-5. Access the interactive API documentation at [http://localhost:8000/docs](http://localhost:8000/docs).

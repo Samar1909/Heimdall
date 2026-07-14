@@ -2,17 +2,20 @@ from fastapi import HTTPException
 import pandas as pd
 import xgboost as xgb
 import time
-from schemas import TransactionPayload
+import os
+from models import TransactionPayload
 import shap
 
 model = None
 explainer = None
 
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "artifacts", "heimdall_fraud_model.json")
+
 def load_model():
     global model, explainer
     print("Loading XGBoost model into memory...")
     model = xgb.XGBClassifier()
-    model.load_model("../artifacts/heimdall_fraud_model.json")
+    model.load_model(MODEL_PATH)
     print("Model loaded successfully!")
     
     print("Initializing SHAP explainer...")

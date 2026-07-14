@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 
-
 class TransactionPayload(BaseModel):
     amt: float
     gender: int
