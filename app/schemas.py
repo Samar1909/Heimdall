@@ -1,33 +1,33 @@
-from pydantic import BaseModel 
+from pydantic import BaseModel
+
 
 class TransactionPayload(BaseModel):
-    Time: float
-    V1: float
-    V2: float
-    V3: float
-    V4: float
-    V5: float
-    V6: float
-    V7: float
-    V8: float
-    V9: float
-    V10: float
-    V11: float
-    V12: float
-    V13: float
-    V14: float
-    V15: float
-    V16: float
-    V17: float
-    V18: float
-    V19: float
-    V20: float
-    V21: float
-    V22: float
-    V23: float
-    V24: float
-    V25: float
-    V26: float
-    V27: float
-    V28: float
-    Amount: float
+    amt: float
+    gender: int
+    city_pop: int
+    unix_time: int
+    age: float
+    hour: int
+    day_of_week: int
+    month: int
+    distance_km: float
+    category_entertainment: int
+    category_food_dining: int
+    category_gas_transport: int
+    category_grocery_net: int
+    category_grocery_pos: int
+    category_health_fitness: int
+    category_home: int
+    category_kids_pets: int
+    category_misc_net: int
+    category_misc_pos: int
+    category_personal_care: int
+    category_shopping_net: int
+    category_shopping_pos: int
+    category_travel: int
+    card_tx_count: int
+    card_avg_amt_prior: float
+    amt_to_avg_ratio: float
+    merchant_freq: float
+    job_freq: float
+    state_freq: float
