@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heimdall Fraud Portal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">🛡️ Heimdall</div>
+        <div id="topbar-session" class="hidden">
+            <span id="session-label"></span>
+            <button class="ghost-btn" onclick="logout()">Log out</button>
+        </div>
+    </header>
+
+    <!-- ========== AUTH VIEW ========== -->
+    <main id="auth-view" class="view">
+        <div class="auth-shell">
+            <div class="tabs">
+                <button type="button" class="tab-btn active" data-tab="login" onclick="setAuthTab('login')">Log In</button>
+                <button type="button" class="tab-btn" data-tab="signup" onclick="setAuthTab('signup')">Sign Up</button>
+            </div>
+
+            <!-- LOGIN PANEL -->
+            <div id="login-panel" class="panel">
+                <div class="role-toggle">
+                    <button type="button" class="role-btn active" data-role="user" onclick="setLoginRole('user')">User</button>
+                    <button type="button" class="role-btn" data-role="merchant" onclick="setLoginRole('merchant')">Merchant</button>
+                </div>
+                <div class="form-group">
+                    <input type="text" id="login-username" placeholder="Username">
+                    <input type="password" id="login-password" placeholder="Password">
+                    <button onclick="login()">Log In</button>
+                </div>
+                <p id="auth-status" class="status-msg"></p>
+            </div>
+
+            <!-- SIGNUP PANEL -->
+            <div id="signup-panel" class="panel hidden">
+                <div class="role-toggle">
+                    <button type="button" class="role-btn active" data-role="user" onclick="setSignupRole('user')">User</button>
+                    <button type="button" class="role-btn" data-role="merchant" onclick="setSignupRole('merchant')">Merchant</button>
+                </div>
+                <div class="form-group">
+                    <input type="text" id="signup-username" placeholder="Username">
+                    <input type="password" id="signup-password" placeholder="Password (min 8 chars)">
+
+                    <div id="signup-user-fields" class="field-group">
+                        <input type="number" id="signup-dob-year" placeholder="Date of Birth (Year), e.g. 1995">
+                        <select id="signup-gender">
+                            <option value="0">Gender: 0</option>
+                            <option value="1">Gender: 1</option>
+                        </select>
+                        <input type="text" id="signup-job" placeholder="Job">
+                        <input type="text" id="signup-city" placeholder="City (e.g. Mumbai)">
+                        <input type="number" step="any" id="signup-lat" placeholder="Latitude">
+                        <input type="number" step="any" id="signup-long" placeholder="Longitude">
+                    </div>
+
+                    <div id="signup-merchant-fields" class="field-group hidden">
+                        <input type="text" id="signup-category" placeholder="Category (e.g. grocery_pos)">
+                        <input type="number" step="any" id="signup-merchant-lat" placeholder="Latitude">
+                        <input type="number" step="any" id="signup-merchant-long" placeholder="Longitude">
+                    </div>
+
+                    <button onclick="signup()">Sign Up</button>
+                </div>
+                <p id="signup-status" class="status-msg"></p>
+            </div>
+        </div>
+    </main>
+
+    <!-- ========== USER DASHBOARD ========== -->
+    <main id="user-dashboard" class="view hidden">
+        <div class="grid">
+            <section class="card">
+                <h2>Profile</h2>
+                <dl id="user-profile" class="profile-list"></dl>
+            </section>
+
+            <section class="card">
+                <h2>Simulate a Swipe</h2>
+                <div class="form-group">
+                    <input type="number" id="tx-merchant" placeholder="Merchant ID (e.g. 1)">
+                    <input type="number" step="any" id="tx-amount" placeholder="Amount ($)">
+                    <button onclick="submitTransaction()">Submit Swipe</button>
+                </div>
+
+                <div id="result-box" class="result-box hidden">
+                    <h3>Decision: <span id="res-status"></span></h3>
+                    <p>Fraud Probability: <span id="res-prob"></span>%</p>
+                    <p>Time: <span id="res-time"></span>ms</p>
+                    <p>Top Risk Factors:</p>
+                    <ul id="res-risk"></ul>
+                </div>
+            </section>
+
+            <section class="card wide">
+                <div class="card-header">
+                    <h2>Recent Transactions</h2>
+                    <button class="ghost-btn" onclick="loadUserTransactions()">Refresh</button>
+                </div>
+                <table class="tx-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Merchant</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Fraud Prob.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-tx-body"></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+
+    <!-- ========== MERCHANT DASHBOARD ========== -->
+    <main id="merchant-dashboard" class="view hidden">
+        <div class="grid">
+            <section class="card">
+                <h2>Profile</h2>
+                <dl id="merchant-profile" class="profile-list"></dl>
+            </section>
+
+            <section class="card">
+                <h2>Snapshot</h2>
+                <div class="stat-row">
+                    <div class="stat">
+                        <div class="stat-value" id="stat-total">0</div>
+                        <div class="stat-label">Transactions</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="stat-flagged">0</div>
+                        <div class="stat-label">Flagged / Blocked</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="stat-volume">$0</div>
+                        <div class="stat-label">Total Volume</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card wide">
+                <div class="card-header">
+                    <h2>Incoming Transactions</h2>
+                    <button class="ghost-btn" onclick="loadMerchantTransactions()">Refresh</button>
+                </div>
+                <table class="tx-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>User</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Fraud Prob.</th>
+                        </tr>
+                    </thead>
+                    <tbody id="merchant-tx-body"></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

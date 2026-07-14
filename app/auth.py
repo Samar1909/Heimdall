@@ -1,7 +1,7 @@
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
 import jwt
 from argon2 import PasswordHasher
@@ -180,3 +180,47 @@ def verify_csrf(
     """Double-submit cookie CSRF check for state-changing requests."""
     if not csrf_token or not x_csrf_token or not secrets.compare_digest(csrf_token, x_csrf_token):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+
+
+def _resolve_entity_from_token(db: Session, access_token: Optional[str]) -> Union[models.User, models.Merchant]:
+    if not access_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    payload = decode_token(access_token)
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+
+    role = payload.get("role")
+    if role == "user":
+        entity = db.query(models.User).filter(models.User.user_id == int(payload["sub"])).first()
+    elif role == "merchant":
+        entity = db.query(models.Merchant).filter(models.Merchant.merchant_id == int(payload["sub"])).first()
+    else:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token role")
+
+    if not entity:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+    return entity
+
+
+def get_current_entity(
+    db: db_dependency,
+    access_token: Annotated[Optional[str], Cookie()] = None,
+) -> Union[models.User, models.Merchant]:
+    """JWT check only (user or merchant), for read-only routes either can call."""
+    return _resolve_entity_from_token(db, access_token)
+
+
+current_entity_dependency = Annotated[Union[models.User, models.Merchant], Depends(get_current_entity)]
+
+
+def require_auth_and_csrf(
+    db: db_dependency,
+    access_token: Annotated[Optional[str], Cookie()] = None,
+    _: Annotated[None, Depends(verify_csrf)] = None,
+) -> Union[models.User, models.Merchant]:
+    """JWT (user or merchant) + CSRF check combined, for state-changing routes either can call."""
+    return _resolve_entity_from_token(db, access_token)
+
+
+protected_route = Annotated[Union[models.User, models.Merchant], Depends(require_auth_and_csrf)]
