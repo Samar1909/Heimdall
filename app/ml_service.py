@@ -64,9 +64,9 @@ def createTransactionObjectForModel(transaction: TransactionPayload) -> pd.DataF
             user_data = {
                 "dob_year": db_user.dob_year,
                 "gender": db_user.gender,
-                "city_pop": db_user.city_pop,
+                "city_pop": db_user.city.city_pop if db_user.city else None,
                 "job": db_user.job,
-                "state": db_user.state,
+                "state": db_user.city.state_id if db_user.city else None,
                 "lat": db_user.lat,
                 "long": db_user.long,
                 "card_tx_count": 0,

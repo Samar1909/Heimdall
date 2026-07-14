@@ -1,32 +1,93 @@
-from pydantic import BaseModel
-
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional
 
+# --- Auth ---
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str = Field(min_length=8)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        if "@" not in value or "." not in value.split("@")[-1]:
+            raise ValueError("Invalid email address")
+        return value.lower()
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class AccountOut(BaseModel):
+    id: str
+    email: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class StateBase(BaseModel):
+    state_id: str
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class CityBase(BaseModel):
+    city_id: str
+    name: str
+    city_pop: int
+    state_id: str
+
+    model_config = ConfigDict(from_attributes=True)
+
 class UserBase(BaseModel):
-    user_id: str
+    user_id: int
+    username: str
     dob_year: int
     gender: int
-    city_pop: int
     job: str
-    state: str
+    city_id: str
     lat: float
     long: float
 
     model_config = ConfigDict(from_attributes=True)
 
+class UserSignupRequest(BaseModel):
+    username: str
+    password: str = Field(min_length=8)
+    dob_year: int
+    gender: int
+    job: str
+    city_name: str
+    lat: float
+    long: float
+
+class UserLoginRequest(BaseModel):
+    username: str
+    password: str
+
 class MerchantBase(BaseModel):
-    merchant_id: str
+    merchant_id: int
+    username: str
     category: str
     lat: float
     long: float
 
     model_config = ConfigDict(from_attributes=True)
 
+class MerchantSignupRequest(BaseModel):
+    username: str
+    password: str = Field(min_length=8)
+    category: str
+    lat: float
+    long: float
+
+class MerchantLoginRequest(BaseModel):
+    username: str
+    password: str
+
 class TransactionBase(BaseModel):
     transaction_id: str
-    user_id: str
-    merchant_id: str
+    user_id: int
+    merchant_id: int
     amt: float
     unix_time: int
     fraud_probability: Optional[float] = None
@@ -37,8 +98,8 @@ class TransactionBase(BaseModel):
 # --- API Request Payload ---
 # This represents the minimal data sent by the payment gateway to the /predict endpoint
 class TransactionPayload(BaseModel):
-    user_id: str
-    merchant_id: str
+    user_id: int
+    merchant_id: int
     amt: float
     unix_time: int
     
