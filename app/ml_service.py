@@ -11,6 +11,8 @@ from database import SessionLocal
 from models import User, Merchant, Transaction
 from schemas import TransactionPayload, TransactionModelBase
 import shap
+import redis
+import json
 
 model = None
 explainer = None
@@ -22,6 +24,7 @@ CATEGORIES = [
 ]
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "artifacts", "heimdall_fraud_model.json")
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 def load_model():
     global model, explainer
@@ -44,90 +47,98 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 def createTransactionObjectForModel(transaction: TransactionPayload) -> pd.DataFrame:
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.user_id == transaction.user_id).first()
-        if user is None:
-            raise HTTPException(404, detail=f"User {transaction.user_id} not found")
+    user_raw = redis_client.get(f"user:{transaction.user_id}")
+    merchant_raw = redis_client.get(f"merchant:{transaction.merchant_id}")
+    
+    user_data = None
+    if user_raw:
+        user_data = json.loads(user_raw)
+    else:
+        db = SessionLocal()
+        try:
+            db_user = db.query(User).filter(User.user_id == transaction.user_id).first()
+            if not db_user:
+                raise HTTPException(404, detail=f"User {transaction.user_id} not found in system")
+            
+            print(f"Cache miss for User {transaction.user_id}. Generating baseline profile.")
+            user_data = {
+                "dob_year": db_user.dob_year,
+                "gender": db_user.gender,
+                "city_pop": db_user.city_pop,
+                "job": db_user.job,
+                "state": db_user.state,
+                "lat": db_user.lat,
+                "long": db_user.long,
+                "card_tx_count": 0,
+                "card_avg_amt_prior": 0.0,
+                "job_freq": 0.0,
+                "state_freq": 0.0
+            }
+            redis_client.set(f"user:{transaction.user_id}", json.dumps(user_data))
+        finally:
+            db.close()
 
-        merchant = db.query(Merchant).filter(Merchant.merchant_id == transaction.merchant_id).first()
-        if merchant is None:
-            raise HTTPException(404, detail=f"Merchant {transaction.merchant_id} not found")
+    merchant_data = None
+    if merchant_raw:
+        merchant_data = json.loads(merchant_raw)
+    else:
+        db = SessionLocal()
+        try:
+            db_merchant = db.query(Merchant).filter(Merchant.merchant_id == transaction.merchant_id).first()
+            if not db_merchant:
+                raise HTTPException(404, detail=f"Merchant {transaction.merchant_id} not found in system")
+            
+            print(f"Cache miss for Merchant {transaction.merchant_id}. Generating baseline profile.")
+            merchant_data = {
+                "category": db_merchant.category,
+                "lat": db_merchant.lat,
+                "long": db_merchant.long,
+                "merchant_freq": 0.0
+            }
+            redis_client.set(f"merchant:{transaction.merchant_id}", json.dumps(merchant_data))
+        finally:
+            db.close()
 
-        tx_time = datetime.fromtimestamp(transaction.unix_time, tz=timezone.utc)
-        age = float(tx_time.year - cast(int, user.dob_year))
+    tx_time = datetime.fromtimestamp(transaction.unix_time, tz=timezone.utc)
+    age = float(tx_time.year - user_data["dob_year"])
 
-        distance_km = _haversine_km(user.lat, user.long, merchant.lat, merchant.long)
+    distance_km = _haversine_km(
+        user_data["lat"], user_data["long"], 
+        merchant_data["lat"], merchant_data["long"]
+    )
 
-        category_flags = {f"category_{cat}": 0 for cat in CATEGORIES}
-        category_key = f"category_{merchant.category}"
-        if category_key in category_flags:
-            category_flags[category_key] = 1
+    category_flags = {f"category_{cat}": 0 for cat in CATEGORIES}
+    category_key = f"category_{merchant_data['category']}"
+    if category_key in category_flags:
+        category_flags[category_key] = 1
 
-        prior_txns = (
-            db.query(Transaction)
-            .filter(
-                Transaction.user_id == transaction.user_id,
-                Transaction.unix_time < transaction.unix_time,
-            )
-            .all()
-        )
-        card_tx_count = len(prior_txns)
-        card_avg_amt_prior = (
-            cast(float, sum(t.amt for t in prior_txns)) / card_tx_count if card_tx_count > 0 else 0.0
-        )
-        amt_to_avg_ratio = (
-            transaction.amt / card_avg_amt_prior if card_avg_amt_prior > 0 else 0.0
-        )
+    card_tx_count = user_data["card_tx_count"]
+    card_avg_amt_prior = user_data["card_avg_amt_prior"]
+    
+    amt_to_avg_ratio = (
+        transaction.amt / card_avg_amt_prior if card_avg_amt_prior > 0 else 0.0
+    )
 
-        total_txn_count = db.query(func.count(Transaction.transaction_id)).scalar() or 0
-        if total_txn_count > 0:
-            merchant_freq = (
-                db.query(func.count(Transaction.transaction_id))
-                .filter(Transaction.merchant_id == transaction.merchant_id)
-                .scalar()
-                / total_txn_count
-            )
-            job_freq = (
-                db.query(func.count(Transaction.transaction_id))
-                .join(User, Transaction.user_id == User.user_id)
-                .filter(User.job == user.job)
-                .scalar()
-                / total_txn_count
-            )
-            state_freq = (
-                db.query(func.count(Transaction.transaction_id))
-                .join(User, Transaction.user_id == User.user_id)
-                .filter(User.state == user.state)
-                .scalar()
-                / total_txn_count
-            )
-        else:
-            merchant_freq = job_freq = state_freq = 0.0
+    model_input = TransactionModelBase(
+        amt=transaction.amt,
+        gender=user_data["gender"],
+        city_pop=user_data["city_pop"],
+        unix_time=transaction.unix_time,
+        age=age,
+        hour=tx_time.hour,
+        day_of_week=tx_time.weekday(),
+        month=tx_time.month,
+        distance_km=distance_km,
+        card_tx_count=card_tx_count,
+        card_avg_amt_prior=card_avg_amt_prior,
+        amt_to_avg_ratio=amt_to_avg_ratio,
+        merchant_freq=merchant_data["merchant_freq"],
+        job_freq=user_data["job_freq"],
+        state_freq=user_data["state_freq"],
+        **category_flags,
+    )
 
-        model_input = TransactionModelBase(
-            amt=transaction.amt,
-            gender=cast(int, user.gender),
-            city_pop=cast(int, user.city_pop),
-            unix_time=transaction.unix_time,
-            age=age,
-            hour=tx_time.hour,
-            day_of_week=tx_time.weekday(),
-            month=tx_time.month,
-            distance_km=distance_km,
-            card_tx_count=card_tx_count,
-            card_avg_amt_prior=card_avg_amt_prior,
-            amt_to_avg_ratio=amt_to_avg_ratio,
-            merchant_freq=merchant_freq,
-            job_freq=job_freq,
-            state_freq=state_freq,
-            **category_flags,
-        )
-
-        return pd.DataFrame([model_input.model_dump()])
-    finally:
-        db.close()
-
+    return pd.DataFrame([model_input.model_dump()])
 
 async def predict_fraud(transaction: TransactionPayload):
     if model is None or explainer is None:
